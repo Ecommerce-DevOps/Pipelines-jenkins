@@ -2,7 +2,7 @@ pipeline {
     agent any
     environment {
         IMAGE_NAME = "user-service"
-        GCR_REGISTRY = "us-central1-docker.pkg.dev/ecommerce-backend-1760307199/ecommerce-microservices"
+        GCR_REGISTRY = "us-central1-docker.pkg.dev/rock-fortress-479417-t5/ecommerce-microservices"
         SERVICE_DIR = "user-service"
         SPRING_PROFILES_ACTIVE = "dev"
         // Credencial de GKE (archivo de clave de servicio JSON)

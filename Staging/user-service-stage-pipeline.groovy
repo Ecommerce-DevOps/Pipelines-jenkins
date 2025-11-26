@@ -3,13 +3,13 @@ pipeline {
     
     environment {
         IMAGE_NAME = "user-service"
-        GCR_REGISTRY = "us-central1-docker.pkg.dev/ecommerce-backend-1760307199/ecommerce-microservices"
+        GCR_REGISTRY = "us-central1-docker.pkg.dev/rock-fortress-479417-t5/ecommerce-microservices"
         FULL_IMAGE_NAME = "${GCR_REGISTRY}/${IMAGE_NAME}"
         
         IMAGE_TAG = "latest-dev" 
         
         GCP_CREDENTIALS = credentials('gke-credentials')
-        GCP_PROJECT = "ecommerce-backend-1760307199"
+        GCP_PROJECT = "rock-fortress-479417-t5"
         
         CLUSTER_NAME = "ecommerce-devops-cluster" 
         CLUSTER_LOCATION_FLAG = "--region=us-central1"
@@ -30,6 +30,19 @@ pipeline {
                 checkout scm
                 echo "📦 Iniciando despliegue a STAGING"
                 echo "📦 Imagen a desplegar: ${FULL_IMAGE_NAME}:${IMAGE_TAG}"
+            }
+        }
+
+        stage('Generate Release Notes') {
+            steps {
+                script {
+                    sh """
+                        echo "📝 Generando Release Notes..."
+                        chmod +x Scripts/generate-release-notes.sh
+                        ./Scripts/generate-release-notes.sh release-notes.txt
+                    """
+                    archiveArtifacts artifacts: 'release-notes.txt', allowEmptyArchive: true
+                }
             }
         }
 

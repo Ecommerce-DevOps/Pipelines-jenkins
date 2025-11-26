@@ -3,7 +3,7 @@ pipeline {
     environment {
         IMAGE_NAME = "favourite-service"
         SERVICE_DIR = "favourite-service"
-        GCR_REGISTRY = "us-central1-docker.pkg.dev/ecommerce-backend-1760307199/ecommerce-microservices"
+        GCR_REGISTRY = "us-central1-docker.pkg.dev/rock-fortress-479417-t5/ecommerce-microservices"
         SPRING_PROFILES_ACTIVE = "dev"
         GCP_CREDENTIALS = credentials('gke-credentials')
     }
