@@ -7,7 +7,7 @@ pipeline {
     }
 
     environment {
-        IMAGE_NAME = "user-service"
+        IMAGE_NAME = "favourite-service"
         GCR_REGISTRY = "us-central1-docker.pkg.dev/rock-fortress-479417-t5/ecommerce-microservices"
         FULL_IMAGE_NAME = "${GCR_REGISTRY}/${IMAGE_NAME}"
         
@@ -21,10 +21,10 @@ pipeline {
         CLUSTER_LOCATION_FLAG = "--region=us-central1"
         
         K8S_NAMESPACE = "staging"
-        K8S_DEPLOYMENT_NAME = "user-service"
-        K8S_CONTAINER_NAME = "user-service"
-        K8S_SERVICE_NAME = "user-service"
-        SERVICE_PORT = "8700" 
+        K8S_DEPLOYMENT_NAME = "favourite-service"
+        K8S_CONTAINER_NAME = "favourite-service"
+        K8S_SERVICE_NAME = "favourite-service"
+        SERVICE_PORT = "8800" 
         
         API_GATEWAY_SERVICE_NAME = "proxy-client" 
     }
@@ -67,9 +67,9 @@ pipeline {
                     git branch: 'main', url: 'https://github.com/Ecommerce-DevOps/Testing-unit-integration-e2e-locust.git', credentialsId: 'github-credentials'
                 }
 
-                // Checkout User Service repo (Required for Release Notes history)
-                dir('user-service') {
-                    git branch: 'main', url: 'https://github.com/Ecommerce-DevOps/user-service.git', credentialsId: 'github-credentials'
+                // Checkout Favourite Service repo (Required for Release Notes history)
+                dir('favourite-service') {
+                    git branch: 'main', url: 'https://github.com/Ecommerce-DevOps/favourite-service.git', credentialsId: 'github-credentials'
                 }
 
                 echo "📦 Iniciando despliegue a STAGING"
@@ -80,8 +80,8 @@ pipeline {
         stage('Generate Release Notes') {
             steps {
                 script {
-                    // Generate notes inside user-service dir to access git history
-                    dir('user-service') {
+                    // Generate notes inside favourite-service dir to access git history
+                    dir('favourite-service') {
                         sh """
                             echo "📝 Generando Release Notes..."
                             # Copy script from Scripts repo to here
@@ -100,11 +100,11 @@ pipeline {
                 script {
                     sh """
                         echo "🔐 Autenticando con GCP..."
-                        gcloud auth activate-service-account --key-file=\${GCP_CREDENTIALS}
-                        gcloud config set project \${GCP_PROJECT}
+                        gcloud auth activate-service-account --key-file=${GCP_CREDENTIALS}
+                        gcloud config set project ${GCP_PROJECT}
                         gcloud auth configure-docker us-central1-docker.pkg.dev --quiet
                         echo "☸️ Obteniendo credenciales de GKE..."
-                        gcloud container clusters get-credentials \${CLUSTER_NAME} \${CLUSTER_LOCATION_FLAG} --project \${GCP_PROJECT}
+                        gcloud container clusters get-credentials ${CLUSTER_NAME} ${CLUSTER_LOCATION_FLAG} --project ${GCP_PROJECT}
                     """
                 }
             }
@@ -114,10 +114,10 @@ pipeline {
             steps {
                 script {
                     sh """
-                        echo "🔍 Verificando \${FULL_IMAGE_NAME}:\${IMAGE_TAG}..."
-                        gcloud artifacts docker images describe \${FULL_IMAGE_NAME}:\${IMAGE_TAG} || {
+                        echo "🔍 Verificando ${FULL_IMAGE_NAME}:${IMAGE_TAG}..."
+                        gcloud artifacts docker images describe ${FULL_IMAGE_NAME}:${IMAGE_TAG} || {
                             echo "❌ ERROR: Imagen no encontrada"
-                            echo "Asegúrate de que el pipeline de DEV ('user-service-pipeline.groovy') haya corrido exitosamente."
+                            echo "Asegúrate de que el pipeline de DEV ('favourite-service-pipeline.groovy') haya corrido exitosamente."
                             exit 1
                         }
                         echo "✅ Imagen verificada."
@@ -130,15 +130,15 @@ pipeline {
             steps {
                 script {
                     sh """
-                        echo "🚀 Desplegando a \${K8S_NAMESPACE} usando Helm..."
-                        kubectl create namespace \${K8S_NAMESPACE} --dry-run=client -o yaml | kubectl apply -f -
+                        echo "🚀 Desplegando a ${K8S_NAMESPACE} usando Helm..."
+                        kubectl create namespace ${K8S_NAMESPACE} --dry-run=client -o yaml | kubectl apply -f -
                         
-                        echo "📋 Aplicando/Actualizando Chart de Helm: \${K8S_DEPLOYMENT_NAME}"
+                        echo "📋 Aplicando/Actualizando Chart de Helm: ${K8S_DEPLOYMENT_NAME}"
                         
                         # Deshabilitamos Eureka para que el pod arranque solo
-                        helm upgrade --install \${K8S_DEPLOYMENT_NAME} manifests-gcp/user-service/ \
-                            --namespace \${K8S_NAMESPACE} \
-                            --set image.tag=\${IMAGE_TAG} \
+                        helm upgrade --install ${K8S_DEPLOYMENT_NAME} manifests-gcp/favourite-service/ \
+                            --namespace ${K8S_NAMESPACE} \
+                            --set image.tag=${IMAGE_TAG} \
                             --set env[4].value="false" \
                             --set env[5].value="false" \
                             --wait --timeout=5m
@@ -156,8 +156,8 @@ pipeline {
                         echo "🏥 Ejecutando health checks..."
                         
                         kubectl wait --for=condition=ready pod \
-                            -l app=\${K8S_DEPLOYMENT_NAME} \
-                            -n \${K8S_NAMESPACE} \
+                            -l app=${K8S_DEPLOYMENT_NAME} \
+                            -n ${K8S_NAMESPACE} \
                             --timeout=300s
                         
                         echo "🎯 Verificando endpoint de salud internamente..."
@@ -184,18 +184,18 @@ pipeline {
             steps {
                 script {
                     sh """
-                        echo "🌐 Verificando disponibilidad del API Gateway (\${API_GATEWAY_SERVICE_NAME})..."
+                        echo "🌐 Verificando disponibilidad del API Gateway (${API_GATEWAY_SERVICE_NAME})..."
                         
                         kubectl wait --for=condition=ready pod \
-                            -l app=\${API_GATEWAY_SERVICE_NAME} \
-                            -n \${K8S_NAMESPACE} \
+                            -l app=${API_GATEWAY_SERVICE_NAME} \
+                            -n ${K8S_NAMESPACE} \
                             --timeout=300s
                         
-                        GATEWAY_IP=\$(kubectl get svc \${API_GATEWAY_SERVICE_NAME} -n \${K8S_NAMESPACE} \
+                        GATEWAY_IP=\$(kubectl get svc ${API_GATEWAY_SERVICE_NAME} -n ${K8S_NAMESPACE} \
                             -o jsonpath='{.spec.clusterIP}')
                         
                         if [ -z "\$GATEWAY_IP" ]; then
-                            echo "❌ No se pudo obtener la IP del servicio \${API_GATEWAY_SERVICE_NAME}"
+                            echo "❌ No se pudo obtener la IP del servicio ${API_GATEWAY_SERVICE_NAME}"
                             exit 1
                         fi
                         
@@ -203,8 +203,8 @@ pipeline {
                         echo "\$GATEWAY_IP" > gateway-ip.txt
                         
                         echo "🔍 Verificando conectividad al Gateway en http://\$GATEWAY_IP:80/app/actuator/health"
-                        kubectl run test-gateway-\${BUILD_NUMBER} --image=curlimages/curl:latest \
-                            -n \${K8S_NAMESPACE} --rm -i --restart=Never --timeout=60s -- \
+                        kubectl run test-gateway-${BUILD_NUMBER} --image=curlimages/curl:latest \
+                            -n ${K8S_NAMESPACE} --rm -i --restart=Never --timeout=60s -- \
                             curl -f --retry 5 --retry-delay 5 --retry-connrefused \
                             http://\$GATEWAY_IP:80/app/actuator/health || {
                                 echo "⚠️ No se pudo conectar al Gateway internamente"
@@ -229,7 +229,7 @@ pipeline {
                         echo "🌐 =============================================="
                         
                         # Obtener la IP del servicio proxy-client directamente en el cluster
-                        GATEWAY_IP=\$(kubectl get svc \${API_GATEWAY_SERVICE_NAME} -n \${K8S_NAMESPACE} -o jsonpath='{.spec.clusterIP}')
+                        GATEWAY_IP=\$(kubectl get svc ${API_GATEWAY_SERVICE_NAME} -n ${K8S_NAMESPACE} -o jsonpath='{.spec.clusterIP}')
                         GATEWAY_PORT=80  # Puerto del servicio
                         
                         echo "Gateway ClusterIP: \$GATEWAY_IP"
@@ -237,7 +237,7 @@ pipeline {
                         
                         # Verificar que el Gateway está respondiendo
                         echo "🔍 Verificando conectividad con el Gateway..."
-                        kubectl run test-gateway-connection --image=curlimages/curl:latest --rm -i --restart=Never -n \${K8S_NAMESPACE} -- \
+                        kubectl run test-gateway-connection --image=curlimages/curl:latest --rm -i --restart=Never -n ${K8S_NAMESPACE} -- \
                             curl -s -o /dev/null -w "%{http_code}" http://\$GATEWAY_IP:\$GATEWAY_PORT/app/actuator/health || {
                                 echo "❌ Gateway no responde. Abortando tests."
                                 exit 1
@@ -259,8 +259,8 @@ pipeline {
 apiVersion: v1
 kind: Pod
 metadata:
-  name: e2e-test-runner-\${BUILD_NUMBER}
-  namespace: \${K8S_NAMESPACE}
+  name: e2e-test-runner-${BUILD_NUMBER}
+  namespace: ${K8S_NAMESPACE}
 spec:
   restartPolicy: Never
   containers:
@@ -273,26 +273,26 @@ EOF
 
                         # Esperar a que el pod esté listo
                         echo "⏳ Esperando a que el pod de tests esté listo..."
-                        kubectl wait --for=condition=ready pod/e2e-test-runner-\${BUILD_NUMBER} -n \${K8S_NAMESPACE} --timeout=120s
+                        kubectl wait --for=condition=ready pod/e2e-test-runner-${BUILD_NUMBER} -n ${K8S_NAMESPACE} --timeout=120s
                         
                         # Copiar el código al pod
                         echo "📦 Copiando código de tests al pod..."
-                        kubectl cp tests/e2e e2e-test-runner-\${BUILD_NUMBER}:/workspace/e2e -n \${K8S_NAMESPACE}
+                        kubectl cp tests/e2e e2e-test-runner-${BUILD_NUMBER}:/workspace/e2e -n ${K8S_NAMESPACE}
                         
                         # Ejecutar tests dentro del pod
                         echo "🧪 Ejecutando tests E2E con JWT..."
-                        kubectl exec -n \${K8S_NAMESPACE} e2e-test-runner-\${BUILD_NUMBER} -- \
+                        kubectl exec -n ${K8S_NAMESPACE} e2e-test-runner-${BUILD_NUMBER} -- \
                             mvn clean test -f /workspace/e2e/pom.xml \
                             -Dapi.gateway.url=\$BASE_URL \
                             -Dorg.slf4j.simpleLogger.log.org.springframework.web.client=DEBUG || TEST_FAILED=true
                         
                         # Copiar resultados de vuelta
                         echo "📋 Copiando resultados de tests..."
-                        kubectl cp e2e-test-runner-\${BUILD_NUMBER}:/workspace/e2e/target tests/e2e/ -n \${K8S_NAMESPACE} || true
+                        kubectl cp e2e-test-runner-${BUILD_NUMBER}:/workspace/e2e/target tests/e2e/ -n ${K8S_NAMESPACE} || true
                         
                         # Limpiar pod de tests
                         echo "🧹 Limpiando pod de tests..."
-                        kubectl delete pod e2e-test-runner-\${BUILD_NUMBER} -n \${K8S_NAMESPACE} || true
+                        kubectl delete pod e2e-test-runner-${BUILD_NUMBER} -n ${K8S_NAMESPACE} || true
                         
                         if [ "\$TEST_FAILED" = "true" ]; then
                             echo "❌ Tests E2E fallaron"
@@ -320,7 +320,7 @@ EOF
                         echo "🛡️ =============================================="
                         
                         # Obtener IP del Gateway
-                        GATEWAY_IP=\$(kubectl get svc \${API_GATEWAY_SERVICE_NAME} -n \${K8S_NAMESPACE} -o jsonpath='{.spec.clusterIP}')
+                        GATEWAY_IP=\$(kubectl get svc ${API_GATEWAY_SERVICE_NAME} -n ${K8S_NAMESPACE} -o jsonpath='{.spec.clusterIP}')
                         TARGET_URL="http://\$GATEWAY_IP:80"
                         
                         mkdir -p reports/zap
@@ -371,7 +371,7 @@ EOF
                         pkill -f "kubectl port-forward.*proxy-client.*8100" || true
                         
                         # Iniciar port-forward en segundo plano
-                        kubectl port-forward svc/\${API_GATEWAY_SERVICE_NAME} 8100:80 -n \${K8S_NAMESPACE} > /dev/null 2>&1 &
+                        kubectl port-forward svc/${API_GATEWAY_SERVICE_NAME} 8100:80 -n ${K8S_NAMESPACE} > /dev/null 2>&1 &
                         PORT_FORWARD_PID=\$!
                         echo "Port-forward PID: \$PORT_FORWARD_PID"
                         
@@ -404,8 +404,8 @@ EOF
                         
                         # Ejecuta locust dentro de un contenedor docker
                         # --network host: Permite al contenedor acceder a localhost del host
-                        # -v \${WORKSPACE}:/mnt/locust: Monta tu código
-                        docker run --rm --network host -v "\${WORKSPACE}":/mnt/locust -w /mnt/locust \
+                        # -v ${WORKSPACE}:/mnt/locust: Monta tu código
+                        docker run --rm --network host -v "${WORKSPACE}":/mnt/locust -w /mnt/locust \
                             locustio/locust \
                             -f tests/performance/ecommerce_load_test.py \
                             --host \$BASE_URL \
@@ -455,8 +455,8 @@ EOF
             script {
                 sh """
                     echo "🎉 ✅ STAGING DEPLOY EXITOSO"
-                    echo "📦 Imagen desplegada: \${FULL_IMAGE_NAME}:\${IMAGE_TAG}"
-                    gcloud auth activate-service-account --key-file=\${GCP_CREDENTIALS}
+                    echo "📦 Imagen desplegada: ${FULL_IMAGE_NAME}:${IMAGE_TAG}"
+                    gcloud auth activate-service-account --key-file=${GCP_CREDENTIALS}
                     gcloud auth revoke --all || true
                 """
                 echo "📧 Enviando notificación de ÉXITO a ${params.NOTIFICATION_EMAIL}..."
@@ -469,9 +469,9 @@ EOF
             script {
                 sh """
                     echo "🔐 Re-autenticando para operaciones de rollback..."
-                    gcloud auth activate-service-account --key-file=\${GCP_CREDENTIALS}
-                    gcloud config set project \${GCP_PROJECT}
-                    gcloud container clusters get-credentials \${CLUSTER_NAME} \${CLUSTER_LOCATION_FLAG} --project \${GCP_PROJECT}
+                    gcloud auth activate-service-account --key-file=${GCP_CREDENTIALS}
+                    gcloud config set project ${GCP_PROJECT}
+                    gcloud container clusters get-credentials ${CLUSTER_NAME} ${CLUSTER_LOCATION_FLAG} --project ${GCP_PROJECT}
                 """
                 
                 def failedStage = env.STAGE_NAME ?: 'Unknown'
@@ -482,13 +482,13 @@ EOF
                     
                     if [ "${failedStage}" = "Deploy to Staging (Helm)" ]; then
                         echo "🔄 Realizando rollback del despliegue fallido..."
-                        helm rollback \${K8S_DEPLOYMENT_NAME} 0 -n \${K8S_NAMESPACE} || echo "⚠️ No hay revisión anterior para rollback."
+                        helm rollback ${K8S_DEPLOYMENT_NAME} 0 -n ${K8S_NAMESPACE} || echo "⚠️ No hay revisión anterior para rollback."
                     else
                         echo "⚠️ Fallo en stage '${failedStage}'. El despliegue NO será revertido."
                     fi
                     
                     echo "📋 Información de debug:"
-                    kubectl get events -n \${K8S_NAMESPACE} --sort-by='.lastTimestamp' | tail -20
+                    kubectl get events -n ${K8S_NAMESPACE} --sort-by='.lastTimestamp' | tail -20
                     gcloud auth revoke --all || true
                 """
                 echo "📧 Enviando notificación de FALLO a ${params.NOTIFICATION_EMAIL}..."
