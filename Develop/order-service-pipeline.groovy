@@ -62,13 +62,16 @@ pipeline {
             steps {
                 script {
                     docker.image('maven:3.8.4-openjdk-11').inside('-v maven-repo:/root/.m2') {
-                        sh "mvn verify -Dspring.profiles.active=dev -pl ${SERVICE_DIR} -am"
+                        sh """
+                            cd ${SERVICE_DIR}
+                            mvn verify -Dspring.profiles.active=dev
+                        """
                     }
                 }
             }
             post {
                 always {
-                    junit '**/target/surefire-reports/*.xml'
+                    junit "${SERVICE_DIR}/target/surefire-reports/*.xml"
                 }
             }
         }
@@ -97,7 +100,10 @@ pipeline {
             steps {
                 script {
                     docker.image('maven:3.8.4-openjdk-11').inside('-v maven-repo:/root/.m2') {
-                        sh "mvn package -DskipTests=true -Dspring.profiles.active=dev -pl ${SERVICE_DIR} -am"
+                        sh """
+                            cd ${SERVICE_DIR}
+                            mvn package -DskipTests=true -Dspring.profiles.active=dev
+                        """
                     }
                 }
             }
