@@ -11,9 +11,16 @@ pipeline {
     stages {
         stage('Checkout') {
             steps {
-                checkout scm
+                cleanWs()
+                dir("${SERVICE_DIR}") {
+                    git branch: 'main', 
+                        url: 'https://github.com/Ecommerce-DevOps/shipping-service.git',
+                        credentialsId: 'github-credentials'
+                }
                 script {
-                    env.GIT_COMMIT_SHA = sh(script: "git rev-parse --short HEAD", returnStdout: true).trim()
+                    dir("${SERVICE_DIR}") {
+                        env.GIT_COMMIT_SHA = sh(script: "git rev-parse --short HEAD", returnStdout: true).trim()
+                    }
                     env.FULL_IMAGE_NAME = "${GCR_REGISTRY}/${IMAGE_NAME}"
                     env.IMAGE_TAG = "${env.GIT_COMMIT_SHA}"
                 }
@@ -25,11 +32,10 @@ pipeline {
             steps {
                 script {
                     docker.image('maven:3.8.4-openjdk-11').inside {
-                        sh '''
-                            mvn clean install -N -Dspring.profiles.active=dev
+                        sh """
                             cd ${SERVICE_DIR}
                             mvn clean compile -Dspring.profiles.active=dev
-                        '''
+                        """
                     }
                 }
             }

@@ -27,7 +27,24 @@ pipeline {
         
         stage('Checkout SCM') {
             steps {
+                cleanWs()
                 checkout scm
+                
+                // Checkout Scripts repo
+                dir('Scripts') {
+                    git branch: 'main', url: 'https://github.com/Ecommerce-DevOps/Scripts.git', credentialsId: 'github-credentials'
+                }
+                
+                // Checkout Manifests repo
+                dir('manifests-gcp') {
+                    git branch: 'main', url: 'https://github.com/Ecommerce-DevOps/Manifests-kubernetes-helms.git', credentialsId: 'github-credentials'
+                }
+                
+                // Checkout Testing repo
+                dir('tests') {
+                    git branch: 'main', url: 'https://github.com/Ecommerce-DevOps/Testing-unit-integration-e2e-locust.git', credentialsId: 'github-credentials'
+                }
+
                 echo "📦 Iniciando despliegue a STAGING"
                 echo "📦 Imagen a desplegar: ${FULL_IMAGE_NAME}:${IMAGE_TAG}"
             }
@@ -38,8 +55,8 @@ pipeline {
                 script {
                     sh """
                         echo "📝 Generando Release Notes..."
-                        chmod +x Scripts/generate-release-notes.sh
-                        ./Scripts/generate-release-notes.sh release-notes.txt
+                        chmod +x Scripts/Infra/generate-release-notes.sh
+                        ./Scripts/Infra/generate-release-notes.sh release-notes.txt
                     """
                     archiveArtifacts artifacts: 'release-notes.txt', allowEmptyArchive: true
                 }
