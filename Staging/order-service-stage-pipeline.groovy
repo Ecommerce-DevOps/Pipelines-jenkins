@@ -139,8 +139,7 @@ pipeline {
                         helm upgrade --install ${K8S_DEPLOYMENT_NAME} manifests-gcp/order-service/ \
                             --namespace ${K8S_NAMESPACE} \
                             --set image.tag=${IMAGE_TAG} \
-                            --set env[4].value="false" \
-                            --set env[5].value="false" \
+                            --set env[0].value="prod" \
                             --wait --timeout=5m
                         
                         echo "✅ Despliegue completado."
