@@ -1,12 +1,17 @@
 pipeline {
     agent any
     
+    parameters {
+        string(name: 'IMAGE_TAG', defaultValue: 'latest-dev', description: 'Tag de la imagen a desplegar (e.g., latest-dev, commit-sha)')
+    }
+
     environment {
         IMAGE_NAME = "user-service"
         GCR_REGISTRY = "us-central1-docker.pkg.dev/rock-fortress-479417-t5/ecommerce-microservices"
         FULL_IMAGE_NAME = "${GCR_REGISTRY}/${IMAGE_NAME}"
         
-        IMAGE_TAG = "latest-dev" 
+        // Use parameter if provided, otherwise default to latest-dev (handled by params, but env var needed for scripts)
+        IMAGE_TAG = "${params.IMAGE_TAG}" 
         
         GCP_CREDENTIALS = credentials('gke-credentials')
         GCP_PROJECT = "rock-fortress-479417-t5"
@@ -44,7 +49,7 @@ pipeline {
         stage('Checkout SCM') {
             steps {
                 cleanWs()
-                checkout scm
+                // No main checkout here, we checkout specific repos below
                 
                 // Checkout Scripts repo
                 dir('Scripts') {
@@ -61,6 +66,11 @@ pipeline {
                     git branch: 'main', url: 'https://github.com/Ecommerce-DevOps/Testing-unit-integration-e2e-locust.git', credentialsId: 'github-credentials'
                 }
 
+                // Checkout User Service repo (Required for Release Notes history)
+                dir('user-service') {
+                    git branch: 'main', url: 'https://github.com/Ecommerce-DevOps/user-service.git', credentialsId: 'github-credentials'
+                }
+
                 echo "📦 Iniciando despliegue a STAGING"
                 echo "📦 Imagen a desplegar: ${FULL_IMAGE_NAME}:${IMAGE_TAG}"
             }
@@ -69,12 +79,17 @@ pipeline {
         stage('Generate Release Notes') {
             steps {
                 script {
-                    sh """
-                        echo "📝 Generando Release Notes..."
-                        chmod +x Scripts/Infra/generate-release-notes.sh
-                        ./Scripts/Infra/generate-release-notes.sh release-notes.txt
-                    """
-                    archiveArtifacts artifacts: 'release-notes.txt', allowEmptyArchive: true
+                    // Generate notes inside user-service dir to access git history
+                    dir('user-service') {
+                        sh """
+                            echo "📝 Generando Release Notes..."
+                            # Copy script from Scripts repo to here
+                            cp ../Scripts/Infra/generate-release-notes.sh .
+                            chmod +x generate-release-notes.sh
+                            ./generate-release-notes.sh release-notes.txt
+                        """
+                        archiveArtifacts artifacts: 'release-notes.txt', allowEmptyArchive: true
+                    }
                 }
             }
         }
