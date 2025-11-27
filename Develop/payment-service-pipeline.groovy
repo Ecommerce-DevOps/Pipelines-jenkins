@@ -18,7 +18,7 @@ pipeline {
                         credentialsId: 'github-credentials'
                     
                     script {
-                        docker.image('maven:3.8.4-openjdk-11').inside {
+                        docker.image('maven:3.8.4-openjdk-11').inside('-v maven-repo:/root/.m2') {
                             sh 'mvn clean install -N' 
                         }
                     }
@@ -48,7 +48,7 @@ pipeline {
         stage('Compile') {
             steps {
                 script {
-                    docker.image('maven:3.8.4-openjdk-11').inside {
+                    docker.image('maven:3.8.4-openjdk-11').inside('-v maven-repo:/root/.m2') {
                         sh """
                             cd ${SERVICE_DIR}
                             mvn clean compile -Dspring.profiles.active=dev
@@ -61,7 +61,7 @@ pipeline {
         stage('Unit & Integration Tests (Maven)') {
             steps {
                 script {
-                    docker.image('maven:3.8.4-openjdk-11').inside {
+                    docker.image('maven:3.8.4-openjdk-11').inside('-v maven-repo:/root/.m2') {
                         sh "mvn verify -Dspring.profiles.active=dev -pl ${SERVICE_DIR} -am"
                     }
                 }
@@ -76,7 +76,7 @@ pipeline {
         stage('Code Quality Analysis') {
             steps {
                 script {
-                    docker.image('maven:3.8.4-openjdk-11').inside {
+                    docker.image('maven:3.8.4-openjdk-11').inside('-v maven-repo:/root/.m2') {
                         sh '''
                             echo "Análisis de calidad de código..."
                             # Añadido '-pl ${SERVICE_DIR} -am' para resolver el parent POM
@@ -95,7 +95,7 @@ pipeline {
         stage('Package') {
             steps {
                 script {
-                    docker.image('maven:3.8.4-openjdk-11').inside {
+                    docker.image('maven:3.8.4-openjdk-11').inside('-v maven-repo:/root/.m2') {
                         sh "mvn package -DskipTests=true -Dspring.profiles.active=dev -pl ${SERVICE_DIR} -am"
                     }
                 }

@@ -33,7 +33,7 @@ pipeline {
                         credentialsId: 'github-credentials'
                     
                     script {
-                        docker.image('maven:3.8.4-openjdk-11').inside {
+                        docker.image('maven:3.8.4-openjdk-11').inside('-v maven-repo:/root/.m2') {
                             sh 'mvn clean install -N' 
                         }
                     }
