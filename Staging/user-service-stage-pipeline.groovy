@@ -3,6 +3,7 @@ pipeline {
     
     parameters {
         string(name: 'IMAGE_TAG', defaultValue: 'latest-dev', description: 'Tag de la imagen a desplegar (e.g., latest-dev, commit-sha)')
+        string(name: 'NOTIFICATION_EMAIL', defaultValue: 'geoffreypv00@gmail.com', description: 'Email para notificaciones de pipeline')
     }
 
     environment {
@@ -309,6 +310,49 @@ EOF
             }
         }
 
+        stage('Security Scan (OWASP ZAP)') {
+            steps {
+                script {
+                    sh """
+                        echo "🛡️ =============================================="
+                        echo "🛡️ Ejecutando Escaneo de Seguridad OWASP ZAP"
+                        echo "🛡️ =============================================="
+                        
+                        # Obtener IP del Gateway
+                        GATEWAY_IP=\$(kubectl get svc \${API_GATEWAY_SERVICE_NAME} -n \${K8S_NAMESPACE} -o jsonpath='{.spec.clusterIP}')
+                        TARGET_URL="http://\$GATEWAY_IP:80"
+                        
+                        mkdir -p reports/zap
+                        chmod 777 reports/zap
+                        
+                        # Ejecutar ZAP Baseline Scan
+                        # Nota: Usamos 'zap-baseline.py' para un escaneo rápido. Para full scan usar 'zap-full-scan.py'
+                        docker run --rm -v \$(pwd)/reports/zap:/zap/wrk/:rw \
+                            --network host \
+                            ghcr.io/zaproxy/zaproxy:stable zap-baseline.py \
+                            -t \$TARGET_URL \
+                            -r zap_report.html \
+                            -I || echo "⚠️ ZAP encontró alertas, revisar reporte."
+                            
+                        echo "✅ Escaneo de seguridad completado."
+                    """
+                }
+            }
+            post {
+                always {
+                    publishHTML([
+                        allowMissing: true,
+                        alwaysLinkToLastBuild: true,
+                        keepAll: true,
+                        reportDir: 'reports/zap',
+                        reportFiles: 'zap_report.html',
+                        reportName: 'OWASP ZAP Security Report',
+                        reportTitles: 'ZAP Security Scan Results'
+                    ])
+                }
+            }
+        }
+
         stage('Run Performance Tests (Locust)') {
             when {
                 expression { fileExists('tests/performance/ecommerce_load_test.py') }
@@ -414,6 +458,10 @@ EOF
                     gcloud auth activate-service-account --key-file=\${GCP_CREDENTIALS}
                     gcloud auth revoke --all || true
                 """
+                echo "📧 Enviando notificación de ÉXITO a ${params.NOTIFICATION_EMAIL}..."
+                mail to: "${params.NOTIFICATION_EMAIL}",
+                     subject: "Deploy Staging Exitoso: ${IMAGE_NAME}",
+                     body: "El despliegue a Staging de ${IMAGE_NAME}:${IMAGE_TAG} ha sido exitoso."
             }
         }
         failure {
@@ -442,6 +490,10 @@ EOF
                     kubectl get events -n \${K8S_NAMESPACE} --sort-by='.lastTimestamp' | tail -20
                     gcloud auth revoke --all || true
                 """
+                echo "📧 Enviando notificación de FALLO a ${params.NOTIFICATION_EMAIL}..."
+                mail to: "${params.NOTIFICATION_EMAIL}",
+                     subject: "Deploy Staging FALLIDO: ${IMAGE_NAME}",
+                     body: "El despliegue a Staging de ${IMAGE_NAME} ha fallado en el stage '${failedStage}'. Revisar logs en Jenkins."
             }
         }
         always {

@@ -1,5 +1,10 @@
 pipeline {
     agent any
+    
+    parameters {
+        string(name: 'NOTIFICATION_EMAIL', defaultValue: 'geoffreypv00@gmail.com', description: 'Email para notificaciones de pipeline')
+    }
+
     environment {
         IMAGE_NAME = "user-service"
         GCR_REGISTRY = "us-central1-docker.pkg.dev/rock-fortress-479417-t5/ecommerce-microservices"
@@ -161,6 +166,10 @@ pipeline {
     post {
         success {
             echo "Pipeline de Build [${IMAGE_NAME}] completado exitosamente."
+            echo "📧 Enviando notificación de ÉXITO a ${params.NOTIFICATION_EMAIL}..."
+            mail to: "${params.NOTIFICATION_EMAIL}",
+                 subject: "Build Dev Exitoso: ${IMAGE_NAME}",
+                 body: "El build de ${IMAGE_NAME} ha sido exitoso. Commit: ${env.GIT_COMMIT_SHA}"
         }
         always {
             cleanWs()
@@ -169,6 +178,10 @@ pipeline {
         }
         failure {
             echo "Build falló para ${IMAGE_NAME}"
+            echo "📧 Enviando notificación de FALLO a ${params.NOTIFICATION_EMAIL}..."
+            mail to: "${params.NOTIFICATION_EMAIL}",
+                 subject: "Build Dev FALLIDO: ${IMAGE_NAME}",
+                 body: "El build de ${IMAGE_NAME} ha fallado. Revisar logs en Jenkins."
         }
     }
 }

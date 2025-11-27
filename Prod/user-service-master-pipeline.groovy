@@ -3,6 +3,7 @@ pipeline {
     
     parameters {
         string(name: 'IMAGE_TAG', defaultValue: 'latest-dev', description: 'Tag de la imagen a desplegar (e.g., latest-dev, commit-sha)')
+        string(name: 'NOTIFICATION_EMAIL', defaultValue: 'geoffreypv00@gmail.com', description: 'Email para notificaciones de pipeline')
     }
     
     environment {
@@ -97,6 +98,12 @@ pipeline {
                 }
             }
         }
+
+        stage('Manual Approval') {
+            steps {
+                input message: '¿Aprobar despliegue a PRODUCCIÓN?', ok: 'Desplegar'
+            }
+        }
         
         stage('Deploy to Prod (Helm)') {
             steps {
@@ -149,6 +156,35 @@ pipeline {
                 }
             }
         }
+
+        stage('Tag Release (Git & Docker)') {
+            steps {
+                script {
+                    dir('user-service') {
+                        // Leer versión del pom.xml
+                        def pomVersion = sh(script: "mvn help:evaluate -Dexpression=project.version -q -DforceStdout", returnStdout: true).trim()
+                        def releaseTag = "v${pomVersion}"
+                        
+                        echo "🏷️ Etiquetando Release: ${releaseTag}"
+                        
+                        // Git Tag
+                        sshagent(['github-credentials']) {
+                            sh """
+                                git tag -a ${releaseTag} -m "Release ${releaseTag} deployed to Prod"
+                                git push origin ${releaseTag} || echo "⚠️ Tag ya existe o error al pushear"
+                            """
+                        }
+                        
+                        // Docker Tag (Promote image to release tag)
+                        sh """
+                            echo "🏷️ Etiquetando imagen Docker como ${releaseTag}..."
+                            gcloud artifacts docker tags add ${FULL_IMAGE_NAME}:${IMAGE_TAG} ${FULL_IMAGE_NAME}:${releaseTag} --quiet
+                            gcloud artifacts docker tags add ${FULL_IMAGE_NAME}:${IMAGE_TAG} ${FULL_IMAGE_NAME}:latest --quiet
+                        """
+                    }
+                }
+            }
+        }
     }
 
     post {
@@ -160,6 +196,10 @@ pipeline {
                     gcloud auth activate-service-account --key-file=${GCP_CREDENTIALS}
                     gcloud auth revoke --all || true
                 """
+                echo "📧 Enviando notificación de ÉXITO a ${params.NOTIFICATION_EMAIL}..."
+                mail to: "${params.NOTIFICATION_EMAIL}",
+                     subject: "Deploy Prod Exitoso: ${IMAGE_NAME}",
+                     body: "El despliegue a Producción de ${IMAGE_NAME}:${IMAGE_TAG} ha sido exitoso."
             }
         }
         failure {
@@ -188,6 +228,10 @@ pipeline {
                     kubectl get events -n ${K8S_NAMESPACE} --sort-by='.lastTimestamp' | tail -20
                     gcloud auth revoke --all || true
                 """
+                echo "📧 Enviando notificación de FALLO a ${params.NOTIFICATION_EMAIL}..."
+                mail to: "${params.NOTIFICATION_EMAIL}",
+                     subject: "Deploy Prod FALLIDO: ${IMAGE_NAME}",
+                     body: "El despliegue a Producción de ${IMAGE_NAME} ha fallado en el stage '${failedStage}'. Revisar logs en Jenkins."
             }
         }
         always {
