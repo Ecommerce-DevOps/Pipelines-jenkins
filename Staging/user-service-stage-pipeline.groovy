@@ -24,6 +24,22 @@ pipeline {
     }
 
     stages {
+        stage('Install Parent POM') {
+            steps {
+                cleanWs()
+                dir('parent-repo') {
+                    git branch: 'main', 
+                        url: 'https://github.com/Ecommerce-DevOps/General-config.git', 
+                        credentialsId: 'github-credentials'
+                    
+                    script {
+                        docker.image('maven:3.8.4-openjdk-11').inside {
+                            sh 'mvn clean install -N' 
+                        }
+                    }
+                }
+            }
+        }
         
         stage('Checkout SCM') {
             steps {
