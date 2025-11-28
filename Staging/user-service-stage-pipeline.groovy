@@ -133,14 +133,14 @@ pipeline {
                         echo "🚀 Desplegando a \${K8S_NAMESPACE} usando Helm..."
                         kubectl create namespace \${K8S_NAMESPACE} --dry-run=client -o yaml | kubectl apply -f -
                         
-                        echo "📋 Aplicando/Actualizando Chart de Helm: \${K8S_DEPLOYMENT_NAME}"
+                        echo "📋 Aplicando/Actualizando Chart de Helm: ${K8S_DEPLOYMENT_NAME}"
                         
-                        # Deshabilitamos Eureka para que el pod arranque solo
-                        helm upgrade --install \${K8S_DEPLOYMENT_NAME} manifests-gcp/user-service/ \
-                            --namespace \${K8S_NAMESPACE} \
+                        # Configurar perfil staging para desactivar seguridad JWT en tests E2E
+                        helm upgrade --install ${K8S_DEPLOYMENT_NAME} manifests-gcp/user-service/ \
+                            --namespace ${K8S_NAMESPACE} \
                             --set image.tag=${IMAGE_TAG} \
                             --set service.type=NodePort \
-                            --set env[0].value="prod" \
+                            --set env.SPRING_PROFILES_ACTIVE="staging" \
                             --wait --timeout=5m
                         
                         echo "✅ Despliegue completado."
