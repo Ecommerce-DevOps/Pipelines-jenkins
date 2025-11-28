@@ -140,7 +140,6 @@ pipeline {
                             --namespace ${K8S_NAMESPACE} \
                             --set image.tag=${IMAGE_TAG} \
                             --set service.type=NodePort \
-                            --set env.SPRING_PROFILES_ACTIVE="staging" \
                             --wait --timeout=5m
                         
                         echo "✅ Despliegue completado."
