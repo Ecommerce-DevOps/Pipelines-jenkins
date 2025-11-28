@@ -217,6 +217,35 @@ pipeline {
             }
         }
 
+        stage('Verify Service Registration') {
+            steps {
+                script {
+                    sh """
+                        echo "🔍 Verificando registro en Eureka..."
+                        
+                        # Retry loop for Eureka registration
+                        for i in {1..30}; do
+                            if kubectl run eureka-check-\${BUILD_NUMBER} --image=curlimages/curl:latest \
+                                -n \${K8S_NAMESPACE} --rm -i --restart=Never -- \
+                                curl -s -f http://discovery:8761/eureka/apps/USER-SERVICE | grep -q "UP"; then
+                                echo "✅ USER-SERVICE registrado y UP en Eureka"
+                                break
+                            fi
+                            
+                            echo "⏳ Esperando a que USER-SERVICE se registre en Eureka... (\$i/30)"
+                            kubectl delete pod eureka-check-\${BUILD_NUMBER} -n \${K8S_NAMESPACE} --force --grace-period=0 2>/dev/null || true
+                            sleep 5
+                            
+                            if [ \$i -eq 30 ]; then
+                                echo "❌ Timeout esperando registro en Eureka"
+                                exit 1
+                            fi
+                        done
+                    """
+                }
+            }
+        }
+
         stage('Run E2E Tests (Maven)') {
             when {
                 expression { fileExists('tests/e2e/pom.xml') }
@@ -329,7 +358,7 @@ EOF
                         
                         # Ejecutar ZAP Baseline Scan
                         # Nota: Usamos 'zap-baseline.py' para un escaneo rápido. Para full scan usar 'zap-full-scan.py'
-                        docker run --rm -v \$(pwd)/reports/zap:/zap/wrk/:rw \
+                        docker run --rm -u 0 -v \$(pwd)/reports/zap:/zap/wrk/:rw \
                             --network host \
                             ghcr.io/zaproxy/zaproxy:stable zap-baseline.py \
                             -t \$TARGET_URL \
