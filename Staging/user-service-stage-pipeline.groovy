@@ -258,6 +258,7 @@ pipeline {
                         
                         # NUEVA ESTRATEGIA: Apuntar directamente a los microservicios (sin proxy-client)
                         # Los servicios en Kubernetes usan DNS interno: service-name.namespace.svc.cluster.local
+                        # IMPORTANTE: user-service usa /user-service como context path (NO /app/user-service)
                         USER_SERVICE_URL="http://user-service.${K8S_NAMESPACE}:8700"
                         
                         echo "User Service URL: \$USER_SERVICE_URL"
