@@ -253,31 +253,27 @@ pipeline {
                 script {
                     sh """
                         echo "🌐 =============================================="
-                        echo "🌐 Obteniendo IP del Gateway en el cluster"
+                        echo "🌐 BYPASS: Conectando directamente a microservicios"
                         echo "🌐 =============================================="
                         
-                        # Obtener la IP del servicio proxy-client directamente en el cluster
-                        GATEWAY_IP=\$(kubectl get svc \${API_GATEWAY_SERVICE_NAME} -n \${K8S_NAMESPACE} -o jsonpath='{.spec.clusterIP}')
-                        GATEWAY_PORT=80  # Puerto del servicio
+                        # NUEVA ESTRATEGIA: Apuntar directamente a los microservicios (sin proxy-client)
+                        # Los servicios en Kubernetes usan DNS interno: service-name.namespace.svc.cluster.local
+                        USER_SERVICE_URL="http://user-service.${K8S_NAMESPACE}:8700"
                         
-                        echo "Gateway ClusterIP: \$GATEWAY_IP"
-                        echo "Gateway Port: \$GATEWAY_PORT"
+                        echo "User Service URL: \$USER_SERVICE_URL"
                         
-                        # Verificar que el Gateway está respondiendo
-                        echo "🔍 Verificando conectividad con el Gateway..."
-                        kubectl run test-gateway-connection --image=curlimages/curl:latest --rm -i --restart=Never -n \${K8S_NAMESPACE} -- \
-                            curl -s -o /dev/null -w "%{http_code}" http://\$GATEWAY_IP:\$GATEWAY_PORT/app/actuator/health || {
-                                echo "❌ Gateway no responde. Abortando tests."
+                        # Verificar que el servicio está respondiendo
+                        echo "🔍 Verificando conectividad con user-service..."
+                        kubectl run test-user-service --image=curlimages/curl:latest --rm -i --restart=Never -n \${K8S_NAMESPACE} -- \\
+                            curl -s -o /dev/null -w "%{http_code}" \$USER_SERVICE_URL/user-service/actuator/health || {
+                                echo "❌ user-service no responde. Abortando tests."
                                 exit 1
                             }
                         
-                        echo "✅ Gateway respondiendo correctamente"
-                        
-                        # URL base para los tests (accesible desde pods en el cluster)
-                        BASE_URL="http://\$GATEWAY_IP:\$GATEWAY_PORT"
+                        echo "✅ user-service respondiendo correctamente"
                         
                         echo "🧪 =============================================="
-                        echo "🧪 Ejecutando E2E Tests contra: \$BASE_URL"
+                        echo "🧪 Ejecutando E2E Tests contra: \$USER_SERVICE_URL"
                         echo "🧪 =============================================="
                         
                         # Ejecutar tests E2E dentro de un pod en el cluster (con acceso a la red del cluster)
@@ -307,12 +303,12 @@ EOF
                         echo "📦 Copiando código de tests al pod..."
                         kubectl cp tests/e2e e2e-test-runner-\${BUILD_NUMBER}:/workspace/e2e -n \${K8S_NAMESPACE}
                         
-                        # Ejecutar tests dentro del pod
-                        echo "🧪 Ejecutando tests E2E con JWT..."
-                        kubectl exec -n \${K8S_NAMESPACE} e2e-test-runner-\${BUILD_NUMBER} -- \
-                            mvn clean test -f /workspace/e2e/pom.xml \
-                            -Dapi.gateway.url=\$BASE_URL \
-                            -Dmaven.test.failure.ignore=true \
+                        # Ejecutar tests dentro del pod (SIN JWT, directo a microservicios)
+                        echo "🧪 Ejecutando tests E2E directamente contra microservicios..."
+                        kubectl exec -n \${K8S_NAMESPACE} e2e-test-runner-\${BUILD_NUMBER} -- \\
+                            mvn clean test -f /workspace/e2e/pom.xml \\
+                            -Dapi.gateway.url=\$USER_SERVICE_URL \\
+                            -Dmaven.test.failure.ignore=true \\
                             -Dorg.slf4j.simpleLogger.log.org.springframework.web.client=DEBUG || TEST_FAILED=true
                         
                         # Copiar resultados de vuelta
@@ -406,13 +402,13 @@ EOF
                         
                         # Esperar a que el port-forward esté listo
                         echo "Esperando a que el port-forward esté activo..."
-                        for i in {1..30}; do
+                        for i in \$(seq 1 30); do
                             if curl -s http://localhost:8100/app/actuator/health > /dev/null 2>&1; then
                                 echo "✅ Port-forward activo!"
                                 break
                             fi
                             if [ \$i -eq 30 ]; then
-                                echo "❌ Port-forward no se pudo establecer"
+                                echo "❌ Port -forward no se pudo establecer"
                                 kill \$PORT_FORWARD_PID 2>/dev/null || true
                                 exit 1
                             fi
