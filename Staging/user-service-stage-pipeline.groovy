@@ -123,7 +123,7 @@ pipeline {
                         
                         echo "📋 Aplicando/Actualizando Chart de Helm: ${K8S_DEPLOYMENT_NAME}"
                         
-                        helm upgrade --install ${K8S_DEPLOYMENT_NAME} manifests-gcp/helm-charts/${K8S_DEPLOYMENT_NAME} \
+                        helm upgrade --install ${K8S_DEPLOYMENT_NAME} manifests-gcp/${K8S_DEPLOYMENT_NAME}/ \
                             --namespace ${K8S_NAMESPACE} \
                             --set image.repository=${FULL_IMAGE_NAME} \
                             --set image.tag=${IMAGE_TAG} \
