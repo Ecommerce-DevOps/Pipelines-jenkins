@@ -155,14 +155,6 @@ pipeline {
                 }
             }
         }
-                                exit 1
-                            }
-                        
-                        echo "✅ Gateway accesible externamente en \$EXTERNAL_IP"
-                    """
-                }
-            }
-        }
 
         stage('Run E2E Tests (Maven)') {
             steps {
