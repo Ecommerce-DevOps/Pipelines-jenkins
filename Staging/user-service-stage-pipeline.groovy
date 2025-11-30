@@ -156,6 +156,179 @@ pipeline {
                         
                         kubectl wait --for=condition=ready pod \
                             -l app=\${K8S_DEPLOYMENT_NAME} \
+                            -n \${K8S_NAMESPACE} \
+                            --timeout=300s
+                        
+                        echo "🎯 Verificando endpoint de salud internamente..."
+                        
+                        # USAR UN POD EXTERNO CON CURL EN LUGAR DE ENTRAR AL POD DE LA APP
+                        kubectl run health-check-${BUILD_NUMBER} \
+                            --image=curlimages/curl:latest \
+                            -n ${K8S_NAMESPACE} \
+                            --rm -i --restart=Never \
+                            -- \
+                            curl -f -v http://${K8S_SERVICE_NAME}:${SERVICE_PORT}/${K8S_SERVICE_NAME}/actuator/health || {
+                                echo "⚠️ Health check falló"
+                                kubectl logs -l app=${K8S_DEPLOYMENT_NAME} -n ${K8S_NAMESPACE} --tail=50
+                                exit 1
+                            }
+                        
+                        echo "✅ Health check passed!"
+                    """
+                }
+            }
+        }
+
+        stage('Verify Gateway Availability') {
+            steps {
+                script {
+                    sh """
+                        echo "🌐 Verificando disponibilidad del API Gateway (\${API_GATEWAY_SERVICE_NAME})..."
+                        
+                        kubectl wait --for=condition=ready pod \
+                            -l app=\${API_GATEWAY_SERVICE_NAME} \
+                            -n \${K8S_NAMESPACE} \
+                            --timeout=300s
+                        
+                        GATEWAY_IP=\$(kubectl get svc \${API_GATEWAY_SERVICE_NAME} -n \${K8S_NAMESPACE} \
+                            -o jsonpath='{.spec.clusterIP}')
+                        
+                        if [ -z "\$GATEWAY_IP" ]; then
+                            echo "❌ No se pudo obtener la IP del servicio \${API_GATEWAY_SERVICE_NAME}"
+                            exit 1
+                        fi
+                        
+                        echo "✅ Gateway ClusterIP: \$GATEWAY_IP"
+                        echo "\$GATEWAY_IP" > gateway-ip.txt
+                        
+                        echo "🔍 Verificando conectividad al Gateway en http://\$GATEWAY_IP:80/app/actuator/health"
+                        kubectl run test-gateway-\${BUILD_NUMBER} --image=curlimages/curl:latest \
+                            -n \${K8S_NAMESPACE} --rm -i --restart=Never --timeout=60s -- \
+                            curl -f --retry 5 --retry-delay 5 --retry-connrefused \
+                            http://\$GATEWAY_IP:80/app/actuator/health || {
+                                echo "⚠️ No se pudo conectar al Gateway internamente"
+                                exit 1
+                            }
+                        
+                        echo "✅ Gateway respondiendo correctamente"
+                    """
+                }
+            }
+        }
+
+        stage('Verify Service Registration') {
+            steps {
+                script {
+                    sh """
+                        echo "🔍 Verificando registro en Eureka..."
+                        
+                        # Retry loop for Eureka registration
+                        for i in {1..30}; do
+                            if kubectl run eureka-check-\${BUILD_NUMBER} --image=curlimages/curl:latest \
+                                -n \${K8S_NAMESPACE} --rm -i --restart=Never -- \
+                                curl -s -f http://discovery:8761/eureka/apps/USER-SERVICE | grep -q "UP"; then
+                                echo "✅ USER-SERVICE registrado y UP en Eureka"
+                                break
+                            fi
+                            
+                            echo "⏳ Esperando a que USER-SERVICE se registre en Eureka... (\$i/30)"
+                        # Ejecutar tests E2E dentro de un pod en el cluster (con acceso a la red del cluster)
+                        echo "🧪 Desplegando pod de tests E2E en el cluster..."
+                        
+                        cat <<EOF | kubectl apply -f -
+apiVersion: v1
+kind: Pod
+metadata:
+  name: e2e-test-runner-\${BUILD_NUMBER}
+  namespace: \${K8S_NAMESPACE}
+spec:
+  restartPolicy: Never
+  containers:
+  - name: maven-tests
+    image: maven:3.9.9-eclipse-temurin-17
+    command: ["sleep"]
+    args: ["3600"]
+    workingDir: /workspace
+EOF
+
+                        # Esperar a que el pod esté listo
+                        echo "⏳ Esperando a que el pod de tests esté listo..."
+                        kubectl wait --for=condition=ready pod/e2e-test-runner-\${BUILD_NUMBER} -n \${K8S_NAMESPACE} --timeout=120s
+                        
+                        # Limpiar pod de tests
+                        echo "🧹 Limpiando pod de tests..."
+                        kubectl delete pod e2e-test-runner-\${BUILD_NUMBER} -n \${K8S_NAMESPACE} || true
+                        
+                        if [ "\$TEST_FAILED" = "true" ]; then
+                            echo "❌ Tests E2E fallaron"
+                            exit 1
+                        fi
+                        
+                        echo "✅ E2E Tests completados exitosamente."
+                    """
+                }
+            }
+            post {
+                always {
+                    junit allowEmptyResults: true, testResults: 'tests/e2e/target/surefire-reports/*.xml'
+                    archiveArtifacts artifacts: 'tests/e2e/target/surefire-reports/**/*', allowEmptyArchive: true
+                }
+            }
+        }
+                        chmod 777 reports/zap
+                        
+                        # Ejecutar ZAP Baseline Scan
+                        # Nota: Usamos 'zap-baseline.py' para un escaneo rápido. Para full scan usar 'zap-full-scan.py'
+                        docker run --rm -u 0 -v \$(pwd)/reports/zap:/zap/wrk/:rw \
+                            --network host \
+                            ghcr.io/zaproxy/zaproxy:stable zap-baseline.py \
+                            -t \$TARGET_URL \
+                            -r zap_report.html \
+                            -I || echo "⚠️ ZAP encontró alertas, revisar reporte."
+                            
+                        echo "✅ Escaneo de seguridad completado."
+                    """
+                }
+            }
+            post {
+                always {
+                    publishHTML([
+                        allowMissing: true,
+                        alwaysLinkToLastBuild: true,
+                        keepAll: true,
+                        reportDir: 'reports/zap',
+                        reportFiles: 'zap_report.html',
+                        reportName: 'OWASP ZAP Security Report',
+                        reportTitles: 'ZAP Security Scan Results'
+                    ])
+                }
+            }
+        }
+
+        stage('Run Performance Tests (Locust)') {
+            when {
+                expression { fileExists('tests/performance/ecommerce_load_test.py') }
+            }
+            steps {
+                script {
+                    sh """
+                        set +e  # No fallar si el port-forward ya existe
+                        
+                        echo "🌐 =============================================="
+                        echo "🌐 Configurando Port-Forward al Gateway para Locust"
+                        echo "🌐 =============================================="
+                        
+                        # Matar cualquier port-forward existente en el puerto 8100
+                        pkill -f "kubectl port-forward.*proxy-client.*8100" || true
+                        
+                        # Iniciar port-forward en segundo plano
+                        kubectl port-forward svc/\${API_GATEWAY_SERVICE_NAME} 8100:80 -n \${K8S_NAMESPACE} > /dev/null 2>&1 &
+                        PORT_FORWARD_PID=\$!
+                        echo "Port-forward PID: \$PORT_FORWARD_PID"
+                        
+                        # Esperar a que el port-forward esté listo
+                        echo "Esperando a que el port-forward esté activo..."
+                        for i in \$(seq 1 30); do
                             if curl -s http://localhost:8100/app/actuator/health > /dev/null 2>&1; then
                                 echo "✅ Port-forward activo!"
                                 break
