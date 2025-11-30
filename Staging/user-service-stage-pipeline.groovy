@@ -18,7 +18,21 @@ pipeline {
         K8S_DEPLOYMENT_NAME = "user-service"
         K8S_CONTAINER_NAME = "user-service"
         K8S_SERVICE_NAME = "user-service"
-        SERVICE_PORT = "8200" 
+        SERVICE_PORT = "8200"
+    }
+
+    stages {
+        stage('Checkout SCM') {
+            steps {
+                checkout scm
+                echo "📦 Iniciando despliegue a STAGING"
+                echo "📦 Imagen a desplegar: ${FULL_IMAGE_NAME}:${IMAGE_TAG}"
+            }
+        }
+
+        stage('Authenticate GCP & Kubernetes') {
+            steps {
+                script {
                     sh """
                         echo "🔐 Autenticando con GCP..."
                         gcloud auth activate-service-account --key-file=\${GCP_CREDENTIALS}
