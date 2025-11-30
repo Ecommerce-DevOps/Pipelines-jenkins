@@ -174,7 +174,7 @@ pipeline {
                         echo "🌐 Verificando disponibilidad del API Gateway (${API_GATEWAY_SERVICE_NAME})..."
                         
                         kubectl wait --for=condition=ready pod \
-                            -l app=${API_GATEWAY_SERVICE_NAME} \
+                            -l app.kubernetes.io/name=${API_GATEWAY_SERVICE_NAME} \
                             -n ${K8S_NAMESPACE} \
                             --timeout=300s
                         
