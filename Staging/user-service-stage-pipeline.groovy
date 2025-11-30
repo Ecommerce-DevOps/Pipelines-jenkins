@@ -1,4 +1,5 @@
-agent any
+pipeline {
+    agent any
 
     parameters {
         string(name: 'IMAGE_TAG', defaultValue: 'latest-dev', description: 'Tag de la imagen a desplegar (e.g., latest-dev, commit-sha)')
@@ -260,21 +261,21 @@ agent any
                         echo "🧪 Desplegando pod de tests E2E en el cluster..."
                         
                         cat <<EOF | kubectl apply -f -
-apiVersion: v1
-kind: Pod
-metadata:
-  name: e2e-test-runner-\${BUILD_NUMBER}
-  namespace: \${K8S_NAMESPACE}
-spec:
-  restartPolicy: Never
-  containers:
-  - name: maven-tests
-    image: maven:3.9.9-eclipse-temurin-17
-    command: ["sleep"]
-    args: ["3600"]
-    workingDir: /workspace
-EOF
-
+                        apiVersion: v1
+                        kind: Pod
+                        metadata:
+                        name: e2e-test-runner-\${BUILD_NUMBER}
+                        namespace: \${K8S_NAMESPACE}
+                        spec:
+                        restartPolicy: Never
+                        containers:
+                        - name: maven-tests
+                            image: maven:3.9.9-eclipse-temurin-17
+                            command: ["sleep"]
+                            args: ["3600"]
+                            workingDir: /workspace
+                        EOF
+                        
                         # Esperar a que el pod esté listo
                         echo "⏳ Esperando a que el pod de tests esté listo..."
                         kubectl wait --for=condition=ready pod/e2e-test-runner-\${BUILD_NUMBER} -n \${K8S_NAMESPACE} --timeout=120s
@@ -384,20 +385,20 @@ EOF
                         echo "📦 Preparando pod de Locust..."
                         
                         cat <<EOF | kubectl apply -f -
-apiVersion: v1
-kind: Pod
-metadata:
-  name: locust-runner-\${BUILD_NUMBER}
-  namespace: \${K8S_NAMESPACE}
-spec:
-  restartPolicy: Never
-  containers:
-  - name: locust
-    image: locustio/locust
-    command: ["sleep"]
-    args: ["3600"]
-    workingDir: /mnt/locust
-EOF
+                        apiVersion: v1
+                        kind: Pod
+                        metadata:
+                        name: locust-runner-\${BUILD_NUMBER}
+                        namespace: \${K8S_NAMESPACE}
+                        spec:
+                        restartPolicy: Never
+                        containers:
+                        - name: locust
+                            image: locustio/locust
+                            command: ["sleep"]
+                            args: ["3600"]
+                            workingDir: /mnt/locust
+                        EOF
 
                         # Esperar a que el pod esté listo
                         echo "⏳ Esperando a que el pod de Locust esté listo..."
@@ -513,3 +514,4 @@ EOF
             cleanWs()
         }
     }
+}
