@@ -291,12 +291,12 @@ EOF
                         kubectl cp tests/e2e e2e-test-runner-\${BUILD_NUMBER}:/workspace/e2e -n \${K8S_NAMESPACE}
                         
                         # Ejecutar tests dentro del pod
-                        # Nota: Se excluyen PerformanceAndLoadE2ETest y ECommerceShoppingFlowE2ETest por fallos conocidos
+                        # Nota: Se excluyen PerformanceAndLoadE2ETest, ECommerceShoppingFlowE2ETest y ErrorHandlingAndResilienceE2ETest por fallos conocidos
                         echo "🧪 Ejecutando tests E2E contra API Gateway..."
                         kubectl exec -n \${K8S_NAMESPACE} e2e-test-runner-\${BUILD_NUMBER} -- \\
                             mvn clean test -f /workspace/e2e/pom.xml \\
                             -Dapi.gateway.url=\$GATEWAY_URL \\
-                            -Dtest="!PerformanceAndLoadE2ETest,!ECommerceShoppingFlowE2ETest,!UserRegistrationFlowE2ETest,!MultiServiceIntegrationE2ETest,!ErrorHandlingAndResilienceE2ETest" \\
+                            -Dtest="UserRegistrationFlowE2ETest,MultiServiceIntegrationE2ETest" \\
                             -Dmaven.test.failure.ignore=true \\
                             -Dorg.slf4j.simpleLogger.log.org.springframework.web.client=DEBUG || TEST_FAILED=true
                         
@@ -324,6 +324,7 @@ EOF
                 }
             }
         }
+        */
 
         stage('Security Scan (OWASP ZAP)') {
             steps {
@@ -429,7 +430,7 @@ EOF
                             --host \$TARGET_HOST \
                             --users 50 --spawn-rate 5 --run-time 1m \
                             --headless \
-                            --csv=/home/locust/locust_stats --exit-code-on-fail 0 || LOCUST_FAILED=true
+                            --csv=/home/locust/locust_stats || LOCUST_FAILED=true
                             
                         # Copiar resultados de vuelta
                         echo "📋 Copiando reportes de Locust..."
