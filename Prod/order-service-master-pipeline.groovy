@@ -196,14 +196,16 @@ pipeline {
                         echo "🏷️ Versión detectada: ${pomVersion}"
                         echo "🏷️ Tag de Release: ${releaseTag}"
                         
-                        // Git Tag
-                        sshagent(['github-credentials']) {
+                        // Git Tag usando withCredentials (sshagent no está instalado)
+                        withCredentials([usernamePassword(credentialsId: 'github-credentials', usernameVariable: 'GIT_USERNAME', passwordVariable: 'GIT_PASSWORD')]) {
                             sh """
+                                git config user.email "jenkins@ecommerce-devops.com"
+                                git config user.name "Jenkins CI"
                                 if git rev-parse ${releaseTag} >/dev/null 2>&1; then
                                     echo "⚠️ Tag ${releaseTag} ya existe en local. Saltando creación de tag."
                                 else
                                     git tag -a ${releaseTag} -m "Release ${releaseTag} deployed to Prod"
-                                    git push origin ${releaseTag} || echo "⚠️ Tag ya existe en remoto o error al pushear"
+                                    git push https://\${GIT_USERNAME}:\${GIT_PASSWORD}@github.com/Ecommerce-DevOps/order-service.git ${releaseTag} || echo "⚠️ Tag ya existe en remoto o error al pushear"
                                 fi
                             """
                         }
