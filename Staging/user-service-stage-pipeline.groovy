@@ -324,7 +324,6 @@ EOF
                 }
             }
         }
-        */
 
         stage('Security Scan (OWASP ZAP)') {
             steps {
