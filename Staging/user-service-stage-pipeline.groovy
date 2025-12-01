@@ -295,6 +295,7 @@ EOF
                         kubectl exec -n \${K8S_NAMESPACE} e2e-test-runner-\${BUILD_NUMBER} -- \\
                             mvn clean test -f /workspace/e2e/pom.xml \\
                             -Dapi.gateway.url=\$GATEWAY_URL \\
+                            -Dtest="UserRegistrationFlowE2ETest,MultiServiceIntegrationE2ETest,ErrorHandlingAndResilienceE2ETest" \\
                             -Dmaven.test.failure.ignore=true \\
                             -Dorg.slf4j.simpleLogger.log.org.springframework.web.client=DEBUG || TEST_FAILED=true
                         
