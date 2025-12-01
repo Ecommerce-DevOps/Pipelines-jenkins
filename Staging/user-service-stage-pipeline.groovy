@@ -368,7 +368,7 @@ EOF
 
         stage('Run Performance Tests (Locust)') {
             when {
-                expression { fileExists('tests/performance/ecommerce_load_test.py') }
+                expression { fileExists('tests/performance/simple_load_test.py') }
             }
             steps {
                 script {
@@ -417,7 +417,7 @@ EOF
                         # Ejecutar Locust dentro del pod
                         echo "🚀 Ejecutando Locust..."
                         kubectl exec -n \${K8S_NAMESPACE} locust-runner-\${BUILD_NUMBER} -- \
-                            locust -f ecommerce_load_test.py \
+                            locust -f simple_load_test.py \
                             --host \$TARGET_HOST \
                             --users 50 --spawn-rate 5 --run-time 1m \
                             --headless \
