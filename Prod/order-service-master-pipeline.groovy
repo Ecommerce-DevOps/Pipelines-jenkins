@@ -161,16 +161,17 @@ pipeline {
                             -n ${K8S_NAMESPACE} \
                             --timeout=300s
                         
-                        POD_NAME=\$(kubectl get pods -n ${K8S_NAMESPACE} \
-                            -l app=${K8S_DEPLOYMENT_NAME} \
-                            -o jsonpath='{.items[0].metadata.name}')
+                        echo "🎯 Verificando endpoint de salud del servicio..."
                         
-                        echo "🎯 Testing pod: \$POD_NAME en puerto ${SERVICE_PORT}"
-                        
-                        kubectl exec \$POD_NAME -n ${K8S_NAMESPACE} -- \
-                            curl -f http://localhost:${SERVICE_PORT}/order-service/actuator/health || {
+                        # Usar un pod temporal con curl (la imagen de la app no tiene curl)
+                        kubectl run health-check-\${BUILD_NUMBER} \
+                            --image=curlimages/curl:latest \
+                            -n ${K8S_NAMESPACE} \
+                            --rm -i --restart=Never \
+                            -- \
+                            curl -f -v http://${K8S_DEPLOYMENT_NAME}:${SERVICE_PORT}/${K8S_DEPLOYMENT_NAME}/actuator/health || {
                                 echo "⚠️ Health check falló"
-                                kubectl logs \$POD_NAME -n ${K8S_NAMESPACE} --tail=50
+                                kubectl logs -l app=${K8S_DEPLOYMENT_NAME} -n ${K8S_NAMESPACE} --tail=50
                                 exit 1
                             }
                         
