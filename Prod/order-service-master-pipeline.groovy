@@ -187,8 +187,10 @@ pipeline {
                     dir('order-service') {
                         echo "🏷️ Iniciando proceso de etiquetado..."
                         
-                        // Leer versión del pom.xml
-                        def pomVersion = sh(script: "mvn help:evaluate -Dexpression=project.version -q -DforceStdout", returnStdout: true).trim()
+                        // Leer versión del pom.xml usando Docker Maven
+                        def pomVersion = docker.image('maven:3.8.4-openjdk-11').inside('-v maven-repo:/root/.m2') {
+                            sh(script: "mvn help:evaluate -Dexpression=project.version -q -DforceStdout", returnStdout: true).trim()
+                        }
                         def releaseTag = "v${pomVersion}"
                         
                         echo "🏷️ Versión detectada: ${pomVersion}"

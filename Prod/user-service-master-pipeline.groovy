@@ -162,25 +162,30 @@ pipeline {
             steps {
                 script {
                     dir('user-service') {
-                        // Leer versión del pom.xml
-                        def pomVersion = sh(script: "mvn help:evaluate -Dexpression=project.version -q -DforceStdout", returnStdout: true).trim()
+                        // Leer versión del pom.xml usando contenedor Maven
+                        def pomVersion = ""
+                        docker.image('maven:3.8.4-openjdk-11').inside('-v maven-repo:/root/.m2') {
+                            pomVersion = sh(script: "mvn help:evaluate -Dexpression=project.version -q -DforceStdout", returnStdout: true).trim()
+                        }
                         def releaseTag = "v${pomVersion}"
                         
                         echo "🏷️ Etiquetando Release: ${releaseTag}"
                         
                         // Git Tag
-                        sshagent(['github-credentials']) {
+                        withCredentials([usernamePassword(credentialsId: 'github-credentials', usernameVariable: 'GIT_USER', passwordVariable: 'GIT_PASS')]) {
                             sh """
-                                git tag -a ${releaseTag} -m "Release ${releaseTag} deployed to Prod"
-                                git push origin ${releaseTag} || echo "⚠️ Tag ya existe o error al pushear"
+                                git config user.email "jenkins@ecommerce-devops.com"
+                                git config user.name "Jenkins CI"
+                                git tag -a ${releaseTag} -m "Release ${releaseTag} deployed to Prod" || echo "⚠️ Tag ya existe"
+                                git push https://\${GIT_USER}:\${GIT_PASS}@github.com/Ecommerce-DevOps/user-service.git ${releaseTag} || echo "⚠️ Error al pushear tag"
                             """
                         }
                         
                         // Docker Tag (Promote image to release tag)
                         sh """
                             echo "🏷️ Etiquetando imagen Docker como ${releaseTag}..."
-                            gcloud artifacts docker tags add ${FULL_IMAGE_NAME}:${IMAGE_TAG} ${FULL_IMAGE_NAME}:${releaseTag} --quiet
-                            gcloud artifacts docker tags add ${FULL_IMAGE_NAME}:${IMAGE_TAG} ${FULL_IMAGE_NAME}:latest --quiet
+                            gcloud artifacts docker tags add ${FULL_IMAGE_NAME}:${IMAGE_TAG} ${FULL_IMAGE_NAME}:${releaseTag} --quiet || true
+                            gcloud artifacts docker tags add ${FULL_IMAGE_NAME}:${IMAGE_TAG} ${FULL_IMAGE_NAME}:latest --quiet || true
                         """
                     }
                 }
