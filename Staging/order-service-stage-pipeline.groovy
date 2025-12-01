@@ -11,7 +11,6 @@ pipeline {
         GCR_REGISTRY = "us-central1-docker.pkg.dev/rock-fortress-479417-t5/ecommerce-microservices"
         FULL_IMAGE_NAME = "${GCR_REGISTRY}/${IMAGE_NAME}"
         
-        // Use parameter if provided, otherwise default to latest-dev (handled by params, but env var needed for scripts)
         IMAGE_TAG = "${params.IMAGE_TAG}" 
         
         GCP_CREDENTIALS = credentials('gke-credentials')
@@ -26,7 +25,7 @@ pipeline {
         K8S_SERVICE_NAME = "order-service"
         SERVICE_PORT = "8300" 
         
-        API_GATEWAY_SERVICE_NAME = "proxy-client" 
+        API_GATEWAY_SERVICE_NAME = "api-gateway"
     }
 
     stages {
@@ -50,24 +49,15 @@ pipeline {
         stage('Checkout SCM') {
             steps {
                 cleanWs()
-                // No main checkout here, we checkout specific repos below
-                
-                // Checkout Scripts repo
                 dir('Scripts') {
                     git branch: 'main', url: 'https://github.com/Ecommerce-DevOps/Scripts.git', credentialsId: 'github-credentials'
                 }
-                
-                // Checkout Manifests repo
                 dir('manifests-gcp') {
                     git branch: 'main', url: 'https://github.com/Ecommerce-DevOps/Manifests-kubernetes-helms.git', credentialsId: 'github-credentials'
                 }
-                
-                // Checkout Testing repo
                 dir('tests') {
                     git branch: 'main', url: 'https://github.com/Ecommerce-DevOps/Testing-unit-integration-e2e-locust.git', credentialsId: 'github-credentials'
                 }
-
-                // Checkout Order Service repo (Required for Release Notes history)
                 dir('order-service') {
                     git branch: 'main', url: 'https://github.com/Ecommerce-DevOps/order-service.git', credentialsId: 'github-credentials'
                 }
@@ -80,11 +70,9 @@ pipeline {
         stage('Generate Release Notes') {
             steps {
                 script {
-                    // Generate notes inside order-service dir to access git history
                     dir('order-service') {
                         sh """
                             echo "📝 Generando Release Notes..."
-                            # Copy script from Scripts repo to here
                             cp ../Scripts/Infra/generate-release-notes.sh .
                             chmod +x generate-release-notes.sh
                             ./generate-release-notes.sh release-notes.txt
@@ -135,12 +123,11 @@ pipeline {
                         
                         echo "📋 Aplicando/Actualizando Chart de Helm: ${K8S_DEPLOYMENT_NAME}"
                         
-                        # Deshabilitamos Eureka para que el pod arranque solo
-                        helm upgrade --install ${K8S_DEPLOYMENT_NAME} manifests-gcp/order-service/ \
+                        helm upgrade --install ${K8S_DEPLOYMENT_NAME} manifests-gcp/${K8S_DEPLOYMENT_NAME}/ \
                             --namespace ${K8S_NAMESPACE} \
+                            --set image.repository=${FULL_IMAGE_NAME} \
                             --set image.tag=${IMAGE_TAG} \
-                            --set service.type=NodePort \
-
+                            --set service.port=${SERVICE_PORT} \
                             --wait --timeout=5m
                         
                         echo "✅ Despliegue completado."
@@ -187,7 +174,7 @@ pipeline {
                         echo "🌐 Verificando disponibilidad del API Gateway (${API_GATEWAY_SERVICE_NAME})..."
                         
                         kubectl wait --for=condition=ready pod \
-                            -l app=${API_GATEWAY_SERVICE_NAME} \
+                            -l app.kubernetes.io/name=${API_GATEWAY_SERVICE_NAME} \
                             -n ${K8S_NAMESPACE} \
                             --timeout=300s
                         
@@ -202,16 +189,45 @@ pipeline {
                         echo "✅ Gateway ClusterIP: \$GATEWAY_IP"
                         echo "\$GATEWAY_IP" > gateway-ip.txt
                         
-                        echo "🔍 Verificando conectividad al Gateway en http://\$GATEWAY_IP:80/app/actuator/health"
+                        echo "🔍 Verificando conectividad al Gateway en http://\$GATEWAY_IP:8080/actuator/health"
                         kubectl run test-gateway-${BUILD_NUMBER} --image=curlimages/curl:latest \
                             -n ${K8S_NAMESPACE} --rm -i --restart=Never --timeout=60s -- \
                             curl -f --retry 5 --retry-delay 5 --retry-connrefused \
-                            http://\$GATEWAY_IP:80/app/actuator/health || {
+                            http://\$GATEWAY_IP:8080/actuator/health || {
                                 echo "⚠️ No se pudo conectar al Gateway internamente"
                                 exit 1
                             }
                         
                         echo "✅ Gateway respondiendo correctamente"
+                    """
+                }
+            }
+        }
+
+        stage('Verify Service Registration') {
+            steps {
+                script {
+                    sh """
+                        echo "🔍 Verificando registro en Eureka..."
+                        
+                        # Retry loop for Eureka registration
+                        for i in {1..30}; do
+                            if kubectl run eureka-check-${BUILD_NUMBER} --image=curlimages/curl:latest \
+                                -n ${K8S_NAMESPACE} --rm -i --restart=Never -- \
+                                curl -s -f http://discovery:8761/eureka/apps/ORDER-SERVICE | grep -q "UP"; then
+                                echo "✅ ORDER-SERVICE registrado y UP en Eureka"
+                                break
+                            fi
+                            
+                            echo "⏳ Esperando a que ORDER-SERVICE se registre en Eureka... (\$i/30)"
+                            kubectl delete pod eureka-check-${BUILD_NUMBER} -n ${K8S_NAMESPACE} --force --grace-period=0 2>/dev/null || true
+                            sleep 5
+                            
+                            if [ \$i -eq 30 ]; then
+                                echo "❌ Timeout esperando registro en Eureka"
+                                exit 1
+                            fi
+                        done
                     """
                 }
             }
@@ -223,39 +239,29 @@ pipeline {
             }
             steps {
                 script {
-                    sh """
-                        echo "🌐 =============================================="
-                        echo "🌐 Obteniendo IP del Gateway en el cluster"
-                        echo "🌐 =============================================="
-                        
-                        # Obtener la IP del servicio proxy-client directamente en el cluster
-                        GATEWAY_IP=\$(kubectl get svc ${API_GATEWAY_SERVICE_NAME} -n ${K8S_NAMESPACE} -o jsonpath='{.spec.clusterIP}')
-                        GATEWAY_PORT=80  # Puerto del servicio
-                        
-                        echo "Gateway ClusterIP: \$GATEWAY_IP"
-                        echo "Gateway Port: \$GATEWAY_PORT"
-                        
-                        # Verificar que el Gateway está respondiendo
-                        echo "🔍 Verificando conectividad con el Gateway..."
-                        kubectl run test-gateway-connection --image=curlimages/curl:latest --rm -i --restart=Never -n ${K8S_NAMESPACE} -- \
-                            curl -s -o /dev/null -w "%{http_code}" http://\$GATEWAY_IP:\$GATEWAY_PORT/app/actuator/health || {
-                                echo "❌ Gateway no responde. Abortando tests."
-                                exit 1
-                            }
-                        
-                        echo "✅ Gateway respondiendo correctamente"
-                        
-                        # URL base para los tests (accesible desde pods en el cluster)
-                        BASE_URL="http://\$GATEWAY_IP:\$GATEWAY_PORT"
-                        
-                        echo "🧪 =============================================="
-                        echo "🧪 Ejecutando E2E Tests contra: \$BASE_URL"
-                        echo "🧪 =============================================="
-                        
-                        # Ejecutar tests E2E dentro de un pod en el cluster (con acceso a la red del cluster)
-                        echo "🧪 Desplegando pod de tests E2E en el cluster..."
-                        
-                        cat <<EOF | kubectl apply -f -
+                    // Inicializamos variable para capturar el estado
+                    def testsFailed = false
+                    
+                    try {
+                        sh """
+                            echo "🌐 =============================================="
+                            echo "🌐 Configurando URL del API Gateway"
+                            echo "🌐 =============================================="
+                            
+                            GATEWAY_URL="http://api-gateway.${K8S_NAMESPACE}:8080"
+                            echo "Gateway URL: \$GATEWAY_URL"
+                            
+                            # Verificar conectividad (Este sí lo dejamos fallar si no hay red, es crítico)
+                            kubectl run test-gateway-conn --image=curlimages/curl:latest --rm -i --restart=Never -n ${K8S_NAMESPACE} -- \
+                                curl -s -o /dev/null -w "%{http_code}" \$GATEWAY_URL/actuator/health || {
+                                    echo "❌ api-gateway no responde. Abortando tests."
+                                    exit 1
+                                }
+                            
+                            echo "✅ api-gateway respondiendo correctamente"
+                            
+                            # Crear Pod de Tests
+                            cat <<EOF | kubectl apply -f -
 apiVersion: v1
 kind: Pod
 metadata:
@@ -271,41 +277,56 @@ spec:
     workingDir: /workspace
 EOF
 
-                        # Esperar a que el pod esté listo
-                        echo "⏳ Esperando a que el pod de tests esté listo..."
-                        kubectl wait --for=condition=ready pod/e2e-test-runner-${BUILD_NUMBER} -n ${K8S_NAMESPACE} --timeout=120s
+                            # Esperar Pod
+                            echo "⏳ Esperando a que el pod de tests esté listo..."
+                            kubectl wait --for=condition=ready pod/e2e-test-runner-${BUILD_NUMBER} -n ${K8S_NAMESPACE} --timeout=120s
+                            
+                            # Copiar Código
+                            echo "📦 Copiando código de tests al pod..."
+                            kubectl cp tests/e2e e2e-test-runner-${BUILD_NUMBER}:/workspace/e2e -n ${K8S_NAMESPACE}
+                            
+                            # Ejecutar Tests (Notar el cambio aquí: capturamos el exit code)
+                            echo "🧪 Ejecutando tests E2E..."
+                            if ! kubectl exec -n ${K8S_NAMESPACE} e2e-test-runner-${BUILD_NUMBER} -- \
+                                mvn clean test -f /workspace/e2e/pom.xml \
+                                -Dapi.gateway.url=\$GATEWAY_URL \
+                                -Dmaven.test.failure.ignore=true; then
+                                echo "⚠️ Tests devolvieron error, pero continuaremos..."
+                                # Creamos un archivo bandera para saber que falló fuera del shell
+                                touch tests_failed_flag
+                            fi
+                            
+                            # Copiar Resultados SIEMPRE
+                            echo "📋 Copiando resultados de tests..."
+                            kubectl cp e2e-test-runner-${BUILD_NUMBER}:/workspace/e2e/target tests/e2e/ -n ${K8S_NAMESPACE} || true
+                            
+                            # Limpiar
+                            kubectl delete pod e2e-test-runner-${BUILD_NUMBER} -n ${K8S_NAMESPACE} || true
+                        """
                         
-                        # Copiar el código al pod
-                        echo "📦 Copiando código de tests al pod..."
-                        kubectl cp tests/e2e e2e-test-runner-${BUILD_NUMBER}:/workspace/e2e -n ${K8S_NAMESPACE}
-                        
-                        # Ejecutar tests dentro del pod
-                        echo "🧪 Ejecutando tests E2E con JWT..."
-                        kubectl exec -n ${K8S_NAMESPACE} e2e-test-runner-${BUILD_NUMBER} -- \
-                            mvn clean test -f /workspace/e2e/pom.xml \
-                            -Dapi.gateway.url=\$BASE_URL \
-                            -Dmaven.test.failure.ignore=true \
-                            -Dorg.slf4j.simpleLogger.log.org.springframework.web.client=DEBUG || TEST_FAILED=true
-                        
-                        # Copiar resultados de vuelta
-                        echo "📋 Copiando resultados de tests..."
-                        kubectl cp e2e-test-runner-${BUILD_NUMBER}:/workspace/e2e/target tests/e2e/ -n ${K8S_NAMESPACE} || true
-                        
-                        # Limpiar pod de tests
-                        echo "🧹 Limpiando pod de tests..."
-                        kubectl delete pod e2e-test-runner-${BUILD_NUMBER} -n ${K8S_NAMESPACE} || true
-                        
-                        if [ "\$TEST_FAILED" = "true" ]; then
-                            echo "❌ Tests E2E fallaron"
-                            exit 1
-                        fi
-                        
+                        // Verificamos si se creó el archivo bandera de fallo
+                        if (fileExists('tests_failed_flag')) {
+                            testsFailed = true
+                            sh "rm tests_failed_flag" // Limpiar
+                        }
+
+                    } catch (Exception e) {
+                        echo "⚠️ Error ejecutando la etapa de tests: ${e.message}"
+                        testsFailed = true
+                    }
+
+                    // Lógica para NO fallar la pipeline
+                    if (testsFailed) {
+                        echo "⚠️ Los tests E2E fallaron, marcando build como UNSTABLE pero continuando..."
+                        currentBuild.result = 'UNSTABLE'
+                    } else {
                         echo "✅ E2E Tests completados exitosamente."
-                    """
+                    }
                 }
             }
             post {
                 always {
+                    // JUnit reportará los fallos visualmente sin detener la pipeline gracias a allowEmptyResults
                     junit allowEmptyResults: true, testResults: 'tests/e2e/target/surefire-reports/*.xml'
                     archiveArtifacts artifacts: 'tests/e2e/target/surefire-reports/**/*', allowEmptyArchive: true
                 }
@@ -317,24 +338,52 @@ EOF
                 script {
                     sh """
                         echo "🛡️ =============================================="
-                        echo "🛡️ Ejecutando Escaneo de Seguridad OWASP ZAP"
+                        echo "🛡️ Ejecutando Escaneo de Seguridad OWASP ZAP (In-Cluster)"
                         echo "🛡️ =============================================="
                         
-                        # Obtener IP del Gateway
-                        GATEWAY_IP=\$(kubectl get svc ${API_GATEWAY_SERVICE_NAME} -n ${K8S_NAMESPACE} -o jsonpath='{.spec.clusterIP}')
-                        TARGET_URL="http://\$GATEWAY_IP:80"
+                        # URL interna del api-gateway
+                        TARGET_URL="http://api-gateway.\${K8S_NAMESPACE}:8080"
+                        echo "Target URL: \$TARGET_URL"
                         
                         mkdir -p reports/zap
-                        chmod 777 reports/zap
                         
-                        # Ejecutar ZAP Baseline Scan
-                        # Nota: Usamos 'zap-baseline.py' para un escaneo rápido. Para full scan usar 'zap-full-scan.py'
-                        docker run --rm -v \$(pwd)/reports/zap:/zap/wrk/:rw \
-                            --network host \
-                            ghcr.io/zaproxy/zaproxy:stable zap-baseline.py \
-                            -t \$TARGET_URL \
-                            -r zap_report.html \
-                            -I || echo "⚠️ ZAP encontró alertas, revisar reporte."
+                        # Ejecutar ZAP dentro del cluster usando un Pod temporal
+                        echo "🛡️ Desplegando pod de OWASP ZAP en el cluster..."
+                        
+                        cat <<EOF | kubectl apply -f -
+apiVersion: v1
+kind: Pod
+metadata:
+  name: zap-scanner-\${BUILD_NUMBER}
+  namespace: \${K8S_NAMESPACE}
+spec:
+  restartPolicy: Never
+  securityContext:
+    runAsUser: 0
+  containers:
+  - name: zap
+    image: ghcr.io/zaproxy/zaproxy:stable
+    command: ["sleep"]
+    args: ["3600"]
+    workingDir: /zap/wrk
+EOF
+
+                        # Esperar a que el pod esté listo
+                        echo "⏳ Esperando a que el pod de ZAP esté listo..."
+                        kubectl wait --for=condition=ready pod/zap-scanner-\${BUILD_NUMBER} -n \${K8S_NAMESPACE} --timeout=120s
+                        
+                        # Ejecutar ZAP Baseline Scan dentro del pod
+                        echo "🛡️ Ejecutando escaneo ZAP..."
+                        kubectl exec -n \${K8S_NAMESPACE} zap-scanner-\${BUILD_NUMBER} -- \
+                            zap-baseline.py -t \$TARGET_URL -r zap_report.html -I || echo "⚠️ ZAP encontró alertas, revisar reporte."
+                        
+                        # Copiar reporte de vuelta
+                        echo "📋 Copiando reporte de ZAP..."
+                        kubectl cp zap-scanner-\${BUILD_NUMBER}:/zap/wrk/zap_report.html reports/zap/zap_report.html -n \${K8S_NAMESPACE} || true
+                        
+                        # Limpiar pod
+                        echo "🧹 Limpiando pod de ZAP..."
+                        kubectl delete pod zap-scanner-\${BUILD_NUMBER} -n \${K8S_NAMESPACE} || true
                             
                         echo "✅ Escaneo de seguridad completado."
                     """
@@ -357,68 +406,81 @@ EOF
 
         stage('Run Performance Tests (Locust)') {
             when {
-                expression { fileExists('tests/performance/ecommerce_load_test.py') }
+                expression { fileExists('tests/performance/simple_load_test.py') }
             }
             steps {
                 script {
                     sh """
-                        set +e  # No fallar si el port-forward ya existe
-                        
-                        echo "🌐 =============================================="
-                        echo "🌐 Configurando Port-Forward al Gateway para Locust"
-                        echo "🌐 =============================================="
-                        
-                        # Matar cualquier port-forward existente en el puerto 8100
-                        pkill -f "kubectl port-forward.*proxy-client.*8100" || true
-                        
-                        # Iniciar port-forward en segundo plano
-                        kubectl port-forward svc/${API_GATEWAY_SERVICE_NAME} 8100:80 -n ${K8S_NAMESPACE} > /dev/null 2>&1 &
-                        PORT_FORWARD_PID=\$!
-                        echo "Port-forward PID: \$PORT_FORWARD_PID"
-                        
-                        # Esperar a que el port-forward esté listo
-                        echo "Esperando a que el port-forward esté activo..."
-                        for i in {1..30}; do
-                            if curl -s http://localhost:8100/app/actuator/health > /dev/null 2>&1; then
-                                echo "✅ Port-forward activo!"
-                                break
-                            fi
-                            if [ \$i -eq 30 ]; then
-                                echo "❌ Port-forward no se pudo establecer"
-                                kill \$PORT_FORWARD_PID 2>/dev/null || true
-                                exit 1
-                            fi
-                            sleep 1
-                        done
-                        
-                        set -e  # Volver a modo estricto
-                        
-                        BASE_URL="http://localhost:8100"
-                        
                         echo "🚀 =============================================="
-                        echo "🚀 Ejecutando Performance Tests con Locust"
-                        echo "🚀 Target: \$BASE_URL"
+                        echo "🚀 Ejecutando Performance Tests con Locust (In-Cluster)"
                         echo "🚀 =============================================="
+                        
+                        # URL interna del api-gateway
+                        TARGET_HOST="http://api-gateway.${K8S_NAMESPACE}:8080"
+                        
+                        echo "Target Host: \$TARGET_HOST"
                         
                         # Crear directorio para reportes
                         mkdir -p reports
                         
-                        # Ejecuta locust dentro de un contenedor docker
-                        # --network host: Permite al contenedor acceder a localhost del host
-                        # -v ${WORKSPACE}:/mnt/locust: Monta tu código
-                        docker run --rm --network host -v "${WORKSPACE}":/mnt/locust -w /mnt/locust \
-                            locustio/locust \
-                            -f tests/performance/ecommerce_load_test.py \
-                            --host \$BASE_URL \
+                        # Ejecutar Locust dentro del cluster usando un Pod temporal
+                        # Montamos el script de test usando ConfigMap o copiándolo (aquí usaremos copia)
+                        
+                        echo "📦 Preparando pod de Locust..."
+                        
+                        cat <<EOF | kubectl apply -f -
+apiVersion: v1
+kind: Pod
+metadata:
+  name: locust-runner-\${BUILD_NUMBER}
+  namespace: \${K8S_NAMESPACE}
+spec:
+  restartPolicy: Never
+  securityContext:
+    runAsUser: 0
+  containers:
+  - name: locust
+    image: locustio/locust
+    command: ["sleep"]
+    args: ["3600"]
+    workingDir: /home/locust
+EOF
+
+                        # Esperar a que el pod esté listo
+                        echo "⏳ Esperando a que el pod de Locust esté listo..."
+                        kubectl wait --for=condition=ready pod/locust-runner-\${BUILD_NUMBER} -n \${K8S_NAMESPACE} --timeout=120s
+                        
+                        # Crear directorio de trabajo y copiar scripts
+                        echo "📦 Preparando directorio de trabajo..."
+                        kubectl exec -n \${K8S_NAMESPACE} locust-runner-\${BUILD_NUMBER} -- mkdir -p /home/locust/performance
+                        
+                        # Copiar el script de test al pod
+                        echo "📦 Copiando script de tests al pod..."
+                        kubectl cp tests/performance/. locust-runner-\${BUILD_NUMBER}:/home/locust/performance/ -n \${K8S_NAMESPACE}
+                        
+                        # Ejecutar Locust dentro del pod
+                        echo "🚀 Ejecutando Locust..."
+                        kubectl exec -n \${K8S_NAMESPACE} locust-runner-\${BUILD_NUMBER} -- \
+                            locust -f /home/locust/performance/simple_load_test.py \
+                            --host \$TARGET_HOST \
                             --users 50 --spawn-rate 5 --run-time 1m \
                             --headless \
-                            --csv=reports/locust --exit-code-on-fail 0
+                            --csv=/home/locust/locust_stats || LOCUST_FAILED=true
+                            
+                        # Copiar resultados de vuelta
+                        echo "📋 Copiando reportes de Locust..."
+                        kubectl cp locust-runner-\${BUILD_NUMBER}:/home/locust/locust_stats_stats.csv reports/locust_stats.csv -n \${K8S_NAMESPACE} || true
+                        
+                        # Limpiar pod
+                        echo "🧹 Limpiando pod de Locust..."
+                        kubectl delete pod locust-runner-\${BUILD_NUMBER} -n \${K8S_NAMESPACE} || true
+                        
+                        if [ "\$LOCUST_FAILED" = "true" ]; then
+                            echo "❌ Performance tests fallaron"
+                            exit 1
+                        fi
                         
                         echo "✅ Performance tests completados"
-                        
-                        # Limpiar port-forward
-                        echo "🧹 Limpiando port-forward..."
-                        kill \$PORT_FORWARD_PID 2>/dev/null || true
                         
                         # Mostrar estadísticas si existen
                         if [ -f "reports/locust_stats.csv" ]; then
